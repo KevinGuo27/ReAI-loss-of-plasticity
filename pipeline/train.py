@@ -12,9 +12,9 @@ from analysis.activations import register_layer_hooks
 from analysis.dead_relu_tracker import track_dead_neurons
 from analysis.effective_rank import compute_effective_rank
 
-# ---------------------------
+# -----------------
 # Parse label mode argument
-# ---------------------------
+# ----------------------
 parser = argparse.ArgumentParser()
 parser.add_argument('--label-mode', type=str, default='raw',
                     choices=['raw', 'one_hot', 'multi_hot', 'embedding'])
@@ -23,17 +23,24 @@ label_mode = args.label_mode
 print(f"Using label mode: {label_mode}")
 
 # ---------------------------
-# Model Setup
+# Set output dimension based on label mode
+# ---------------------
+if label_mode == "embedding":
+    output_dim = 5  # Change this to your embedding dim if needed
+else:
+    output_dim = 10  # CIFAR-10 class count
+
+# ---------------------------
+# Model Set up
 # ---------------------------
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-model = SimpleCNN().to(device)
+model = SimpleCNN(output_dim=output_dim).to(device)
 optimizer = optim.Adam(model.parameters(), lr=0.001)
 
 # ---------------------------
 # Hook into internal layers
 # ---------------------------
-activations = register_layer_hooks(model, ["relu1", "relu2", "relu3"])
-
+activations = register_layer_hooks(model, ["conv1", "conv2", "conv3"])
 # ---------------------------
 # Dataset Setup
 # ---------------------------
@@ -59,36 +66,50 @@ elif label_mode == "embedding":
 else:
     raise ValueError(f"Unsupported label mode: {label_mode}")
 
-# ---------------------------
+# -------------------------
 # Training Loop
 # ---------------------------
 print("Starting training loop...")
 for epoch in range(5):
-    print(f"Epoch {epoch+1} starting...")
+    print(f"\nEpoch {epoch+1} starting...")
     running_loss = 0.0
+    correct = 0
+    total = 0
 
     for i, (inputs, labels) in enumerate(trainloader):
         inputs, labels = inputs.to(device), labels.to(device)
-
-        labels = transform_labels(labels).to(device)
+        transformed_labels = transform_labels(labels).to(device)
 
         optimizer.zero_grad()
         outputs = model(inputs)
-        loss = criterion(outputs, labels)
+        loss = criterion(outputs, transformed_labels)
         loss.backward()
         optimizer.step()
 
         running_loss += loss.item()
 
+        # Accuracy tracking (only for classification-compatible modes)
+        if label_mode != "embedding":
+            preds = torch.argmax(outputs, dim=1)
+            if label_mode in ["one_hot", "multi_hot"]:
+                true_labels = torch.argmax(transformed_labels, dim=1)
+            else:
+                true_labels = labels
+            correct += (preds == true_labels).sum().item()
+            total += labels.size(0)
+
         if i % 100 == 0:
             print(f"Batch {i}, Loss: {loss.item():.4f}")
 
+    avg_accuracy = correct / total if total > 0 else None
     print(f"Epoch {epoch+1} total loss: {running_loss:.3f}")
+    if avg_accuracy is not None:
+        print(f"Epoch {epoch+1} accuracy: {avg_accuracy:.4f}")
 
     for name, act in activations.items():
-        dead, total = track_dead_neurons(act)
+        dead, total_neurons = track_dead_neurons(act)
         rank = compute_effective_rank(act)
-        print(f"[{name}] Dead: {dead}/{total} | Effective Rank: {rank:.2f}")
+        print(f"[{name}] Dead: {dead}/{total_neurons} | Effective Rank: {rank:.2f}")
 
 # # transform = transforms.ToTensor()
 # # trainset = torchvision.datasets.CIFAR10(

@@ -1,26 +1,22 @@
-
 import torch.nn as nn
 import torch.nn.functional as F
 
 class SimpleCNN(nn.Module):
-    def __init__(self):
+    def __init__(self, output_dim=10):  # Accepts output_dim now
         super(SimpleCNN, self).__init__()
         self.conv1 = nn.Conv2d(3, 16, 3, padding=1)
-        self.relu1 = nn.ReLU()
-        self.pool1 = nn.MaxPool2d(2, 2)
-
         self.conv2 = nn.Conv2d(16, 32, 3, padding=1)
-        self.relu2 = nn.ReLU()
-        self.pool2 = nn.MaxPool2d(2, 2)
-
+        self.conv3 = nn.Conv2d(32, 64, 3, padding=1)
+        self.pool = nn.MaxPool2d(2, 2)
         self.flatten = nn.Flatten()
-        self.fc1 = nn.Linear(32 * 8 * 8, 64)
-        self.relu3 = nn.ReLU()
-        self.fc2 = nn.Linear(64, 10)  # Keep as logits or adjust for label structure
+        self.fc1 = nn.Linear(64 * 4 * 4, 128)
+        self.fc2 = nn.Linear(128, output_dim)  # Output layer now matches label mode
 
     def forward(self, x):
-        x = self.pool1(self.relu1(self.conv1(x)))
-        x = self.pool2(self.relu2(self.conv2(x)))
+        x = self.pool(F.relu(self.conv1(x)))
+        x = self.pool(F.relu(self.conv2(x)))
+        x = self.pool(F.relu(self.conv3(x)))
         x = self.flatten(x)
-        x = self.relu3(self.fc1(x))
-        return self.fc2(x)
+        x = F.relu(self.fc1(x))
+        x = self.fc2(x)
+        return x
