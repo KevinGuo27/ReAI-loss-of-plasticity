@@ -1,0 +1,51 @@
+# === Python cache ===
+__pycache__/
+*.py[cod]
+*.so
+*.egg
+*.egg-info/
+*.pyd
+*.pyo
+
+# === Conda / Virtual Envs ===
+.env
+.venv/
+venv/
+env/
+conda-env/
+*.conda
+*.env
+
+# === Jupyter Notebooks ===
+.ipynb_checkpoints/
+
+# === OS files ===
+.DS_Store
+Thumbs.db
+
+# === IDEs / Editors ===
+.vscode/
+.idea/
+
+# === Data files ===
+data/
+*.csv
+*.tsv
+*.json
+*.zip
+*.tar.gz
+*.h5
+*.pt
+*.pth
+*.pkl
+*.npz
+*.npy
+
+# === Logs / Outputs ===
+*.log
+*.out
+*.tmp
+
+# === LFS (Large File Storage) ===
+*.lfs
+*.bin
