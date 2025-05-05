@@ -1,15 +1,16 @@
 import torch
 import torch.nn.functional as F
 from torch import optim
-
+import numpy as np
 
 class Backprop(object):
     def __init__(self, net, step_size=0.001, loss='mse', opt='sgd', beta_1=0.9, beta_2=0.999, weight_decay=0.0,
-                 to_perturb=False, perturb_scale=0.1, device='cpu', momentum=0):
+                 to_perturb=False, perturb_scale=0.1, device='cpu', momentum=0, ef_lambda=0.01):
         self.net = net
         self.to_perturb = to_perturb
         self.perturb_scale = perturb_scale
         self.device = device
+        self.ef_lambda = ef_lambda
 
         # define the optimizer
         if opt == 'sgd':
@@ -27,6 +28,26 @@ class Backprop(object):
 
         # Placeholder
         self.previous_features = None
+    
+    def effective_rank(self, m):
+        sv = torch.linalg.svdvals(m)
+        # print("Effective rank: ", sv)
+        norm_sv = sv / torch.sum(torch.abs(sv))
+        entropy = torch.tensor(0.0, dtype=torch.float32, device=sv.device)
+        for p in norm_sv:
+            if p > 0.0:
+                entropy -= p * torch.log(p)
+
+        effective_rank = torch.tensor(np.e) ** entropy
+        return effective_rank.to(torch.float32)
+
+    def _print_grads(self):
+        for name, param in self.net.named_parameters():
+            if param.grad is not None:
+                # you can replace .norm() with param.grad.abs().mean(), etc.
+                print(f"{name:40s} grad norm = {param.grad.norm().item():.6f}")
+            else:
+                print(f"{name:40s} grad is None")
 
     def learn(self, x, target):
         """
@@ -36,12 +57,25 @@ class Backprop(object):
         :return: loss
         """
         self.opt.zero_grad()
-        output, features = self.net.predict(x=x)
-        loss = self.loss_func(output, target)
+        output, features = self.net.predict(x)
         self.previous_features = features
+        er_terms = [self.effective_rank(f) for f in features]
+        # print("Effective rank terms: ", er_terms)
+        # print("Effective rank terms: ", [f.item() for f in er_terms])
+        ef_reg = torch.stack(er_terms).mean()
+        loss_reg = - self.ef_lambda * ef_reg
+        # loss_reg.backward()
+        # print("=== Gradients after effective‐rank backward ===")
+        # self._print_grads()
+        # self.opt.step()
 
+        # Phase 2: accuracy update
+        loss = self.loss_func(output, target) + loss_reg
         loss.backward()
+        # print("=== Gradients after accuracy backward ===")
+        # self._print_grads()
         self.opt.step()
+
         if self.to_perturb:
             self.perturb()
         if self.loss == 'nll':

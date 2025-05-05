@@ -147,7 +147,7 @@ def online_expr(params: {}):
                     approximate_ranks[new_idx][rep_layer_idx], approximate_ranks_abs[new_idx][rep_layer_idx] = \
                         compute_matrix_rank_summaries(m=m[rep_layer_idx], use_scipy=True)
                     dead_neurons[new_idx][rep_layer_idx] = (m[rep_layer_idx].abs().sum(dim=0) == 0).sum()
-                print('approximate rank: ', approximate_ranks[new_idx], ', dead neurons: ', dead_neurons[new_idx])
+                print('step:', task_idx, ', approximate rank: ', approximate_ranks[new_idx], ', dead neurons: ', dead_neurons[new_idx], 'effective rank: ', effective_ranks[new_idx])
 
         for start_idx in tqdm(range(0, change_after, mini_batch_size)):
             start_idx = start_idx % examples_per_task

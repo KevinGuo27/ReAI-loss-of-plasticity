@@ -1,3 +1,4 @@
+import torch
 from torch import optim
 from lop.algos.gnt import GnT
 from lop.utils.AdamGnT import AdamGnT
@@ -25,9 +26,11 @@ class ContinualBackprop(object):
             accumulate=False,
             momentum=0,
             outgoing_random=False,
-            weight_decay=0
+            weight_decay=0,
+            ef_lambda=1e-3,
     ):
         self.net = net
+        self.ef_lambda = ef_lambda
 
         # define the optimizer
         if opt == 'sgd':
@@ -56,8 +59,26 @@ class ContinualBackprop(object):
             init=init,
             accumulate=accumulate,
         )
+    
+    def effective_rank_loss(self, features):
+        """
+        Entropy-based effective-rank regularizer over a list of activation matrices.
+        """
+        reg = 0.0
+        eps = 1e-6
+        for m in features:
+            # compute covariance-like matrix
+            C = m.T @ m               # shape (features, features)
+            # singular values
+            sigma = torch.linalg.svdvals(C)
+            p = sigma / (sigma.sum() + eps)
+            # Shannon entropy
+            H = - (p * (p + eps).log()).sum()
+            # negative entropy -> maximize entropy
+            reg += -H
+        return reg
 
-    def learn(self, x, target):
+    def learn(self, x, target, effective_rank=None):
         """
         Learn using one step of gradient-descent and generate-&-test
         :param x: input
@@ -68,6 +89,10 @@ class ContinualBackprop(object):
         output, features = self.net.predict(x=x)
         loss = self.loss_func(output, target)
         self.previous_features = features
+        ef_reg = self.effective_rank_loss(features)
+
+        # combined loss
+        loss = loss + self.ef_lambda * ef_reg
 
         # do the backward pass and take a gradient step
         self.opt.zero_grad()
