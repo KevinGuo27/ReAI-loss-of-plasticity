@@ -68,6 +68,12 @@ def online_expr(params: {}):
         maturity_threshold = params['mt']
     if 'util_type' in params.keys():
         util_type = params['util_type']
+    if 'ef_lambda' in params.keys():
+        ef_lambda = params['ef_lambda']
+    if 'rank_interval' in params.keys():
+        rank_interval = params['rank_interval']
+    if 'er_lr' in params.keys():
+        er_lr = params['er_lr']
 
     classes_per_task = 10
     images_per_class = 6000
@@ -116,6 +122,9 @@ def online_expr(params: {}):
             device=dev,
             to_perturb=to_perturb,
             perturb_scale=perturb_scale,
+            ef_lambda=ef_lambda,
+            rank_interval=rank_interval,
+            er_lr=er_lr,
         )
     accuracy = nll_accuracy
     examples_per_task = images_per_class * classes_per_task

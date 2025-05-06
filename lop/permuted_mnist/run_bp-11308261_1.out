@@ -1,0 +1,11 @@
+## SLURM PROLOG ###############################################################
+##    Job ID : 11308264
+##  Job Name : run
+##  Nodelist : gpu2253
+##      CPUs : 
+##  Mem/Node : 65536 MB
+## Directory : /oscar/home/kguo32/ReAI-loss-of-plasticity/lop/permuted_mnist
+##   Job Started : Tue May  6 11:22:13 AM EDT 2025
+###############################################################################
+step: 0 , approximate rank:  tensor([16., 14., 11.]) , dead neurons:  tensor([0., 0., 1.]) effective rank:  tensor([14.3178, 12.2538, 10.4690])
+recent accuracy tensor(0.8517)

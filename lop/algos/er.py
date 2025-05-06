@@ -6,7 +6,7 @@ from collections import deque
 
 class EffectiveRank(object):
     def __init__(self, net, step_size=0.001, loss='mse', opt='sgd', beta_1=0.9, beta_2=0.999, weight_decay=0.0,
-                 to_perturb=False, perturb_scale=0.1, device='cpu', momentum=0, ef_lambda=0.01, rank_interval=100,):
+                 to_perturb=False, perturb_scale=0.1, device='cpu', momentum=0, ef_lambda=0.01, rank_interval=100, er_lr=0.01):
         self.net = net
         self.to_perturb = to_perturb
         self.perturb_scale = perturb_scale
@@ -23,7 +23,7 @@ class EffectiveRank(object):
             self.opt = optim.AdamW(self.net.parameters(), lr=step_size, betas=(beta_1, beta_2),
                                    weight_decay=weight_decay)
 
-        self.opt_er = optim.SGD(self.net.parameters(), lr=0.01, weight_decay=weight_decay, momentum=momentum)
+        self.opt_er = optim.SGD(self.net.parameters(), lr=er_lr, weight_decay=weight_decay, momentum=momentum)
         # define the loss function
         self.loss = loss
         self.loss_func = {'nll': F.cross_entropy, 'mse': F.mse_loss}[self.loss]

@@ -21,12 +21,13 @@ def add_cfg_performance(cfg='', setting_idx=0, m=2*10*1000, num_runs=30, metric=
             per_param_setting_performance.append(np.array(bin_m_errs(errs=data['weight_mag_sum'].sum(dim=1)/num_weights, m=m)))
         elif metric == 'dead_neurons':
             num_units = 3*2000
-            per_param_setting_performance.append(np.array(bin_m_errs(errs=data['dead_neurons'].sum(dim=1)/num_units*100, m=m)))
+            per_param_setting_performance.append(np.array(bin_m_errs(errs=data['dead_neurons'].sum(dim=1), m=m)))
         elif metric == 'effective_rank':
             rank_normlization = 3*2000/100
             per_param_setting_performance.append(np.array(bin_m_errs(errs=data['effective_ranks'].sum(dim=1)/rank_normlization, m=m)))
         else:
             per_param_setting_performance.append(np.array(bin_m_errs(errs=data['accuracies'] * 100, m=m)))
+            print('Accuracy:', data['accuracies'].mean())
     print(param_settings[setting_idx], setting_idx, np.array(per_param_setting_performance).mean())
     return np.array(per_param_setting_performance)
 
@@ -55,13 +56,13 @@ def main(arguments):
         performances.append(add_cfg_performance(cfg=cfg_file, setting_idx=i, m=m, num_runs=num_runs, metric=metric))
 
     yticks = {'weight': [0, 0.02, 0.04, 0.06, 0.08, 0.10], 'accuracy': [88, 90, 92, 94, 96],
-              'dead_neurons': [0, 10, 20, 30], 'effective_rank': [0, 10, 20, 30, 40, 50]}[metric]
+              'dead_neurons': [0, 50, 100, 150, 200, 250, 300], 'effective_rank': [0, 10, 20, 30, 40, 50]}[metric]
     generate_online_performance_plot(
         performances=performances,
         colors=['C1', 'C3', 'C5', 'C2', 'C4', 'C6'],
         yticks=yticks,
-        xticks=[0, 200*m, 400*m, 600*m, 800*m],
-        xticks_labels=['0', '200', '400', '600', '800'],
+        xticks=[0, 200*m],
+        xticks_labels=['0', '200'],
         m=m,
         fontsize=18,
         labels=param_settings,
