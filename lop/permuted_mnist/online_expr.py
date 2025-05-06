@@ -6,15 +6,15 @@ import argparse
 import numpy as np
 from tqdm import tqdm
 from lop.algos.bp import Backprop
-from lop.algos.er import EffectiveRank
 from lop.algos.cbp import ContinualBackprop
 from lop.nets.linear import MyLinear
 from torch.nn.functional import softmax
 from lop.nets.deep_ffnn import DeepFFNN
 from lop.utils.miscellaneous import nll_accuracy, compute_matrix_rank_summaries
+import wandb
 
 
-def online_expr(params: {}):
+def online_expr(params):
     agent_type = params['agent']
     num_tasks = 200
     if 'num_tasks' in params.keys():
@@ -68,12 +68,13 @@ def online_expr(params: {}):
         maturity_threshold = params['mt']
     if 'util_type' in params.keys():
         util_type = params['util_type']
-    if 'ef_lambda' in params.keys():
-        ef_lambda = params['ef_lambda']
-    if 'rank_interval' in params.keys():
-        rank_interval = params['rank_interval']
-    if 'er_lr' in params.keys():
-        er_lr = params['er_lr']
+    
+    wandb.init(
+            project=params.get('wandb_project', 'OnlineExpr'),
+            name=params.get('wandb_run_name', None),
+            config=params,
+            reinit=True
+        )
 
     classes_per_task = 10
     images_per_class = 6000
@@ -112,20 +113,7 @@ def online_expr(params: {}):
             accumulate=True,
             device=dev,
         )
-    elif agent_type in ['er']:
-        learner = EffectiveRank(
-            net=net,
-            step_size=step_size,
-            opt=opt,
-            loss='nll',
-            weight_decay=weight_decay,
-            device=dev,
-            to_perturb=to_perturb,
-            perturb_scale=perturb_scale,
-            ef_lambda=ef_lambda,
-            rank_interval=rank_interval,
-            er_lr=er_lr,
-        )
+
     accuracy = nll_accuracy
     examples_per_task = images_per_class * classes_per_task
     total_examples = int(num_tasks * change_after)
@@ -143,6 +131,7 @@ def online_expr(params: {}):
     approximate_ranks_abs = torch.zeros((int(total_examples/rank_measure_period), num_hidden_layers), dtype=torch.float)
     ranks = torch.zeros((int(total_examples/rank_measure_period), num_hidden_layers), dtype=torch.float)
     dead_neurons = torch.zeros((int(total_examples/rank_measure_period), num_hidden_layers), dtype=torch.float)
+    differentiable_effective_ranks = torch.zeros((int(total_examples/rank_measure_period), num_hidden_layers), dtype=torch.float)
 
     iter = 0
     with open('data/mnist_', 'rb+') as f:
@@ -164,18 +153,45 @@ def online_expr(params: {}):
                 m = net.predict(x[:2000])[1]
                 for rep_layer_idx in range(num_hidden_layers):
                     ranks[new_idx][rep_layer_idx], effective_ranks[new_idx][rep_layer_idx], \
-                    approximate_ranks[new_idx][rep_layer_idx], approximate_ranks_abs[new_idx][rep_layer_idx] = \
+                    approximate_ranks[new_idx][rep_layer_idx], approximate_ranks_abs[new_idx][rep_layer_idx], differentiable_effective_ranks[new_idx][rep_layer_idx] = \
                         compute_matrix_rank_summaries(m=m[rep_layer_idx], use_scipy=True)
                     dead_neurons[new_idx][rep_layer_idx] = (m[rep_layer_idx].abs().sum(dim=0) == 0).sum()
-                print('step:', task_idx, ', approximate rank: ', approximate_ranks[new_idx], ', dead neurons: ', dead_neurons[new_idx], 'effective rank: ', effective_ranks[new_idx])
+                print('task: ', task_idx, ', approximate rank: ', approximate_ranks[new_idx], ', dead neurons: ', dead_neurons[new_idx], ', effective rank: ', effective_ranks[new_idx])
 
+        # Maximize Effective_rank on all x
+        if agent_type in ['bp', 'l2'] and params.get("erank_interleave", False):
+                # 1 gradient-ascent update on erank
+                # print("maximizing...")
+                _ = learner.maximize_effective_rank(x, steps=5)
+        
+        buffer_x = []
         for start_idx in tqdm(range(0, change_after, mini_batch_size)):
             start_idx = start_idx % examples_per_task
             batch_x = x[start_idx: start_idx+mini_batch_size]
             batch_y = y[start_idx: start_idx+mini_batch_size]
 
+            buffer_x.append(batch_x)
+
+            # effective_rank = torch.zeros((num_hidden_layers), dtype=torch.float)
+            # with torch.no_grad():
+            #     m = net.predict(x[:2000])[1]
+            #     for rep_layer_idx in range(num_hidden_layers):
+            #         rank, effective_rank[rep_layer_idx], approximate_rank, approximate_rank_abs, _ = compute_matrix_rank_summaries(m = m[rep_layer_idx], use_scipy=True)
+            #     print("effective ranks after maximizing: ", effective_rank)
+
             # train the network
             loss, network_output = learner.learn(x=batch_x, target=batch_y)
+
+            if(len(buffer_x) % 16 == 0):
+                rank_update_data = torch.cat(buffer_x, dim=0)
+                learner.maximize_effective_rank(rank_update_data, steps=5)
+                buffer_x = []
+
+            # with torch.no_grad():
+            #     m = net.predict(x[:2000])[1]
+            #     for rep_layer_idx in range(num_hidden_layers):
+            #         rank, effective_rank[rep_layer_idx], approximate_rank, approximate_rank_abs, _ = compute_matrix_rank_summaries(m = m[rep_layer_idx], use_scipy=True)
+            #     print("effective ranks after learning: ", effective_rank)
 
             if to_log and agent_type != 'linear':
                 for idx, layer_idx in enumerate(learner.net.layers_to_log):
@@ -184,8 +200,14 @@ def online_expr(params: {}):
             with torch.no_grad():
                 accuracies[iter] = accuracy(softmax(network_output, dim=1), batch_y).cpu()
             iter += 1
+        
+        recent_accuracy = accuracies[new_iter_start:iter - 1].mean()
+        wandb.log({
+            'accuracy': recent_accuracy,
+            'effective_rank': effective_ranks[new_idx],
+        }, step = task_idx)
 
-        print('recent accuracy', accuracies[new_iter_start:iter - 1].mean())
+        print('recent accuracy', recent_accuracy)
         if task_idx % save_after_every_n_tasks == 0:
             data = {
                 'accuracies': accuracies.cpu(),

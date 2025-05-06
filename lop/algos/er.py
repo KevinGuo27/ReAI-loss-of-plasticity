@@ -1,108 +1,122 @@
 import torch
 import torch.nn.functional as F
 from torch import optim
-import numpy as np
-from collections import deque
 
 class EffectiveRank(object):
-    def __init__(self, net, step_size=0.001, loss='mse', opt='sgd', beta_1=0.9, beta_2=0.999, weight_decay=0.0,
-                 to_perturb=False, perturb_scale=0.1, device='cpu', momentum=0, ef_lambda=0.01, rank_interval=100, er_lr=0.01):
-        self.net = net
+    def __init__(self,
+                 net,
+                 step_size=0.001,
+                 erank_step_size=0.001,
+                 loss='mse',
+                 opt='sgd',
+                 beta_1=0.9,
+                 beta_2=0.999,
+                 weight_decay=0.0,
+                 to_perturb=False,
+                 perturb_scale=0.1,
+                 device='cpu',
+                 momentum=0,
+                 erank_lambda=0.01):
+        self.net = net.to(device)
+        self.device = device
+        self.erank_lambda = erank_lambda
         self.to_perturb = to_perturb
         self.perturb_scale = perturb_scale
-        self.device = device
-        self.ef_lambda = ef_lambda
 
-        # define the optimizer
+        # main optimizer for the task loss
         if opt == 'sgd':
-            self.opt = optim.SGD(self.net.parameters(), lr=step_size, weight_decay=weight_decay, momentum=momentum)
+            self.opt = optim.SGD(net.parameters(), lr=step_size,
+                                 weight_decay=weight_decay,
+                                 momentum=momentum)
         elif opt == 'adam':
-            self.opt = optim.Adam(self.net.parameters(), lr=step_size, betas=(beta_1, beta_2),
+            self.opt = optim.Adam(net.parameters(), lr=step_size,
+                                  betas=(beta_1, beta_2),
                                   weight_decay=weight_decay)
-        elif opt == 'adamW':
-            self.opt = optim.AdamW(self.net.parameters(), lr=step_size, betas=(beta_1, beta_2),
+        else:  # AdamW
+            self.opt = optim.AdamW(net.parameters(), lr=step_size,
+                                   betas=(beta_1, beta_2),
                                    weight_decay=weight_decay)
 
-        self.opt_er = optim.SGD(self.net.parameters(), lr=er_lr, weight_decay=weight_decay, momentum=momentum)
-        # define the loss function
+        # separate optimizer for erank objective
+        # you might even choose different hyperparams here:
+        self.opt_erank = optim.SGD(net.parameters(),
+                                   lr=erank_step_size)
+
+        # loss function mapping
         self.loss = loss
-        self.loss_func = {'nll': F.cross_entropy, 'mse': F.mse_loss}[self.loss]
-        self.x_buffer: deque[torch.Tensor] = deque(maxlen=rank_interval)
-        self.rank_interval = rank_interval
+        self.loss_func = {'nll': F.cross_entropy,
+                          'mse': F.mse_loss}[loss]
+        
+    def effective_rank_loss(self, feature: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
+        """
+        Compute the Shannon-entropy effective rank of the spectrum sv.
+        
+        Args:
+        sv: 1D tensor of singular values (non-negative).
+        eps: small constant to ensure numerical stability.
+        Returns:
+        scalar tensor: exp( - sum_i p_i * log(p_i) ).
+        """
+        # 1. Ensure non-negativity & normalize
+        sv = torch.linalg.svdvals(feature.T).abs()
+        total = sv.sum().clamp(min=eps)
+        p = sv / total            # shape (r,)
 
-        # Placeholder
-        self.previous_features = None
-    
-    def effective_rank(self, m):
-        sv = torch.linalg.svdvals(m)
-        # print("Effective rank: ", sv)
-        norm_sv = sv / torch.sum(torch.abs(sv))
-        entropy = torch.tensor(0.0, dtype=torch.float32, device=sv.device)
-        for p in norm_sv:
-            if p > 0.0:
-                entropy -= p * torch.log(p)
+        # 2. Compute entropy: sum p * log(p), but avoid log(0)
+        entropy = -(p * torch.log(p + eps)).sum()
 
-        effective_rank = torch.tensor(np.e) ** entropy
-        return effective_rank.to(torch.float32)
+        # 3. Return exp(entropy)
+        return torch.exp(entropy)
 
-    def _print_grads(self):
-        for name, param in self.net.named_parameters():
-            if param.grad is not None:
-                # you can replace .norm() with param.grad.abs().mean(), etc.
-                print(f"{name:40s} grad norm = {param.grad.norm().item():.6f}")
-            else:
-                print(f"{name:40s} grad is None")
+
+    def maximize_effective_rank(self, x, steps=1):
+        """
+        Run `steps` gradient-ascent updates to maximize the
+        effective-rank of the last hidden activations.
+        """
+        x = x.to(self.device)
+        for i in range(steps):
+            self.opt_erank.zero_grad()
+            _, features = self.net.predict(x)
+            erank_losses = [self.effective_rank_loss(f) for f in features]
+            loss_erank = - torch.stack(erank_losses).mean()
+            loss_erank.backward()
+            self.opt_erank.step()
+
+        # return the final erank value (detached)
+        return loss_erank.detach()
 
     def learn(self, x, target):
         """
-        Learn using one step of gradient-descent
-        :param x: input
-        :param target: desired output
-        :return: loss
+        One step of *supervised* learning on the real task.
+        No more erank term in here.
         """
+        x, target = x.to(self.device), target.to(self.device)
         self.opt.zero_grad()
         output, features = self.net.predict(x)
-        self.x_buffer.append(x.detach())
-        self.previous_features = features
-        # print("Effective rank terms: ", er_terms)
-        # print("Effective rank terms: ", [f.item() for f in er_terms])
-        # loss_reg.backward()
-        # print("=== Gradients after effective‐rank backward ===")
-        # self._print_grads()
-        # self.opt.step()
+        loss_task = self.loss_func(output, target)
 
-        # Phase 2: accuracy update
-        loss = self.loss_func(output, target)
-        loss.backward()
-        # print("=== Gradients after accuracy backward ===")
-        # self._print_grads()
+        erank_losses = [self.effective_rank_loss(f) for f in features]
+        loss_erank = - torch.stack(erank_losses).mean()
+        loss_task += self.erank_lambda * loss_erank
+
+        loss_task.backward()
         self.opt.step()
-
-        if len(self.x_buffer) == self.rank_interval:
-            # stack → big batch (B=rank_interval × minibatch)
-            big_x = torch.cat(list(self.x_buffer), dim=0)
-
-            self.opt_er.zero_grad()                        # fresh grad pass
-            _, feats = self.net.predict(big_x)          # recompute features
-
-            er_terms = [self.effective_rank(f) for f in feats]
-            ef_reg   = torch.stack(er_terms).mean()
-            loss_er  = -self.ef_lambda * ef_reg         # maximise ER ⇒ min -ER
-            loss_er.backward()
-            self.opt_er.step()
-
-            self.x_buffer.clear()  
 
         if self.to_perturb:
             self.perturb()
+
+        # return just the task loss (and maybe output)
         if self.loss == 'nll':
-            return loss.detach(), output.detach()
-        return loss.detach()
+            return loss_task.detach(), output.detach()
+        return loss_task.detach()
 
     def perturb(self):
         with torch.no_grad():
+            # same as before: add noise to each layer’s weights/biases
             for i in range(int(len(self.net.layers)/2)+1):
-                self.net.layers[i * 2].bias +=\
-                    torch.empty(self.net.layers[i * 2].bias.shape, device=self.device).normal_(mean=0, std=self.perturb_scale)
-                self.net.layers[i * 2].weight +=\
-                    torch.empty(self.net.layers[i * 2].weight.shape, device=self.device).normal_(mean=0, std=self.perturb_scale)
+                layer = self.net.layers[i*2]
+                layer.bias += layer.bias.new_empty(layer.bias.shape)\
+                                        .normal_(0, self.perturb_scale)
+                layer.weight += layer.weight.new_empty(layer.weight.shape)\
+                                          .normal_(0, self.perturb_scale)
