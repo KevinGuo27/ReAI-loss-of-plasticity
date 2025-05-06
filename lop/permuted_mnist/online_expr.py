@@ -6,13 +6,12 @@ import argparse
 import numpy as np
 from tqdm import tqdm
 from lop.algos.bp import Backprop
+from lop.algos.er import EffectiveRank
 from lop.algos.cbp import ContinualBackprop
 from lop.nets.linear import MyLinear
 from torch.nn.functional import softmax
 from lop.nets.deep_ffnn import DeepFFNN
 from lop.utils.miscellaneous import nll_accuracy, compute_matrix_rank_summaries
-import wandb
-
 
 def online_expr(params):
     agent_type = params['agent']
@@ -68,13 +67,14 @@ def online_expr(params):
         maturity_threshold = params['mt']
     if 'util_type' in params.keys():
         util_type = params['util_type']
-    
-    wandb.init(
-            project=params.get('wandb_project', 'OnlineExpr'),
-            name=params.get('wandb_run_name', None),
-            config=params,
-            reinit=True
-        )
+    if 'er_lr' in params.keys():
+        er_lr = params['er_lr']
+    if 'er_batch' in params.keys():
+        er_batch = params['er_batch']
+    if 'er_step' in params.keys():
+        er_step = params['er_step']
+    if 'er_coeff' in params.keys():
+        er_coeff = params['er_coeff']
 
     classes_per_task = 10
     images_per_class = 6000
@@ -99,6 +99,19 @@ def online_expr(params):
             device=dev,
             to_perturb=to_perturb,
             perturb_scale=perturb_scale,
+        )
+    elif agent_type in ['er']:
+        learner = EffectiveRank(
+            net=net,
+            step_size=step_size,
+            opt=opt,
+            loss='nll',
+            weight_decay=weight_decay,
+            device=dev,
+            to_perturb=to_perturb,
+            perturb_scale=perturb_scale,
+            erank_step_size=er_lr,
+            erank_lambda=er_coeff,
         )
     elif agent_type in ['cbp']:
         learner = ContinualBackprop(
@@ -131,7 +144,6 @@ def online_expr(params):
     approximate_ranks_abs = torch.zeros((int(total_examples/rank_measure_period), num_hidden_layers), dtype=torch.float)
     ranks = torch.zeros((int(total_examples/rank_measure_period), num_hidden_layers), dtype=torch.float)
     dead_neurons = torch.zeros((int(total_examples/rank_measure_period), num_hidden_layers), dtype=torch.float)
-    differentiable_effective_ranks = torch.zeros((int(total_examples/rank_measure_period), num_hidden_layers), dtype=torch.float)
 
     iter = 0
     with open('data/mnist_', 'rb+') as f:
@@ -153,13 +165,13 @@ def online_expr(params):
                 m = net.predict(x[:2000])[1]
                 for rep_layer_idx in range(num_hidden_layers):
                     ranks[new_idx][rep_layer_idx], effective_ranks[new_idx][rep_layer_idx], \
-                    approximate_ranks[new_idx][rep_layer_idx], approximate_ranks_abs[new_idx][rep_layer_idx], differentiable_effective_ranks[new_idx][rep_layer_idx] = \
+                    approximate_ranks[new_idx][rep_layer_idx], approximate_ranks_abs[new_idx][rep_layer_idx] = \
                         compute_matrix_rank_summaries(m=m[rep_layer_idx], use_scipy=True)
                     dead_neurons[new_idx][rep_layer_idx] = (m[rep_layer_idx].abs().sum(dim=0) == 0).sum()
                 print('task: ', task_idx, ', approximate rank: ', approximate_ranks[new_idx], ', dead neurons: ', dead_neurons[new_idx], ', effective rank: ', effective_ranks[new_idx])
 
         # Maximize Effective_rank on all x
-        if agent_type in ['bp', 'l2'] and params.get("erank_interleave", False):
+        if agent_type in ['bp'] and params.get("erank_interleave", False):
                 # 1 gradient-ascent update on erank
                 # print("maximizing...")
                 _ = learner.maximize_effective_rank(x, steps=5)
@@ -172,26 +184,13 @@ def online_expr(params):
 
             buffer_x.append(batch_x)
 
-            # effective_rank = torch.zeros((num_hidden_layers), dtype=torch.float)
-            # with torch.no_grad():
-            #     m = net.predict(x[:2000])[1]
-            #     for rep_layer_idx in range(num_hidden_layers):
-            #         rank, effective_rank[rep_layer_idx], approximate_rank, approximate_rank_abs, _ = compute_matrix_rank_summaries(m = m[rep_layer_idx], use_scipy=True)
-            #     print("effective ranks after maximizing: ", effective_rank)
-
             # train the network
             loss, network_output = learner.learn(x=batch_x, target=batch_y)
 
-            if(len(buffer_x) % 16 == 0):
+            if(len(buffer_x) % er_batch == 0) and agent_type in ['er'] and not params.get("erank_interleave", False):
                 rank_update_data = torch.cat(buffer_x, dim=0)
-                learner.maximize_effective_rank(rank_update_data, steps=5)
+                learner.maximize_effective_rank(rank_update_data, steps=er_step)
                 buffer_x = []
-
-            # with torch.no_grad():
-            #     m = net.predict(x[:2000])[1]
-            #     for rep_layer_idx in range(num_hidden_layers):
-            #         rank, effective_rank[rep_layer_idx], approximate_rank, approximate_rank_abs, _ = compute_matrix_rank_summaries(m = m[rep_layer_idx], use_scipy=True)
-            #     print("effective ranks after learning: ", effective_rank)
 
             if to_log and agent_type != 'linear':
                 for idx, layer_idx in enumerate(learner.net.layers_to_log):
@@ -202,10 +201,6 @@ def online_expr(params):
             iter += 1
         
         recent_accuracy = accuracies[new_iter_start:iter - 1].mean()
-        wandb.log({
-            'accuracy': recent_accuracy,
-            'effective_rank': effective_ranks[new_idx],
-        }, step = task_idx)
 
         print('recent accuracy', recent_accuracy)
         if task_idx % save_after_every_n_tasks == 0:
