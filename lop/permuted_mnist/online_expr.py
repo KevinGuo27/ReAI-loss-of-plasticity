@@ -6,6 +6,7 @@ import argparse
 import numpy as np
 from tqdm import tqdm
 from lop.algos.bp import Backprop
+from lop.algos.er import EffectiveRank
 from lop.algos.cbp import ContinualBackprop
 from lop.nets.linear import MyLinear
 from torch.nn.functional import softmax
@@ -105,7 +106,17 @@ def online_expr(params: {}):
             accumulate=True,
             device=dev,
         )
-
+    elif agent_type in ['er']:
+        learner = EffectiveRank(
+            net=net,
+            step_size=step_size,
+            opt=opt,
+            loss='nll',
+            weight_decay=weight_decay,
+            device=dev,
+            to_perturb=to_perturb,
+            perturb_scale=perturb_scale,
+        )
     accuracy = nll_accuracy
     examples_per_task = images_per_class * classes_per_task
     total_examples = int(num_tasks * change_after)
