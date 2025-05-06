@@ -6,17 +6,21 @@ import argparse
 import numpy as np
 from tqdm import tqdm
 from lop.algos.bp import Backprop
-from lop.algos.er import EffectiveRank
 from lop.algos.cbp import ContinualBackprop
 from lop.nets.linear import MyLinear
 from torch.nn.functional import softmax
 from lop.nets.deep_ffnn import DeepFFNN
 from lop.utils.miscellaneous import nll_accuracy, compute_matrix_rank_summaries
 
+def one_hot_accuracy(predictions, targets):
+    predicted_classes = predictions.argmax(dim=1)
+    true_classes = targets.argmax(dim=1)
+    return (predicted_classes == true_classes).float().mean()
+
 
 def online_expr(params: {}):
     agent_type = params['agent']
-    num_tasks = 200
+    num_tasks = 5
     if 'num_tasks' in params.keys():
         num_tasks = params['num_tasks']
     if 'num_examples' in params.keys() and "change_after" in params.keys():
@@ -68,12 +72,6 @@ def online_expr(params: {}):
         maturity_threshold = params['mt']
     if 'util_type' in params.keys():
         util_type = params['util_type']
-    if 'ef_lambda' in params.keys():
-        ef_lambda = params['ef_lambda']
-    if 'rank_interval' in params.keys():
-        rank_interval = params['rank_interval']
-    if 'er_lr' in params.keys():
-        er_lr = params['er_lr']
 
     classes_per_task = 10
     images_per_class = 6000
@@ -93,7 +91,7 @@ def online_expr(params: {}):
             net=net,
             step_size=step_size,
             opt=opt,
-            loss='nll',
+            loss='mse',
             weight_decay=weight_decay,
             device=dev,
             to_perturb=to_perturb,
@@ -104,7 +102,7 @@ def online_expr(params: {}):
             net=net,
             step_size=step_size,
             opt=opt,
-            loss='nll',
+            loss='mse',
             replacement_rate=replacement_rate,
             maturity_threshold=maturity_threshold,
             decay_rate=decay_rate,
@@ -112,20 +110,7 @@ def online_expr(params: {}):
             accumulate=True,
             device=dev,
         )
-    elif agent_type in ['er']:
-        learner = EffectiveRank(
-            net=net,
-            step_size=step_size,
-            opt=opt,
-            loss='nll',
-            weight_decay=weight_decay,
-            device=dev,
-            to_perturb=to_perturb,
-            perturb_scale=perturb_scale,
-            ef_lambda=ef_lambda,
-            rank_interval=rank_interval,
-            er_lr=er_lr,
-        )
+
     accuracy = nll_accuracy
     examples_per_task = images_per_class * classes_per_task
     total_examples = int(num_tasks * change_after)
@@ -167,12 +152,13 @@ def online_expr(params: {}):
                     approximate_ranks[new_idx][rep_layer_idx], approximate_ranks_abs[new_idx][rep_layer_idx] = \
                         compute_matrix_rank_summaries(m=m[rep_layer_idx], use_scipy=True)
                     dead_neurons[new_idx][rep_layer_idx] = (m[rep_layer_idx].abs().sum(dim=0) == 0).sum()
-                print('step:', task_idx, ', approximate rank: ', approximate_ranks[new_idx], ', dead neurons: ', dead_neurons[new_idx], 'effective rank: ', effective_ranks[new_idx])
+                print('approximate rank: ', approximate_ranks[new_idx], ', dead neurons: ', dead_neurons[new_idx])
 
         for start_idx in tqdm(range(0, change_after, mini_batch_size)):
             start_idx = start_idx % examples_per_task
             batch_x = x[start_idx: start_idx+mini_batch_size]
             batch_y = y[start_idx: start_idx+mini_batch_size]
+            batch_y = torch.nn.functional.one_hot(batch_y, num_classes=classes_per_task).float()
 
             # train the network
             loss, network_output = learner.learn(x=batch_x, target=batch_y)
@@ -182,7 +168,7 @@ def online_expr(params: {}):
                     weight_mag_sum[iter][idx] = learner.net.layers[layer_idx].weight.data.abs().sum()
             # log accuracy
             with torch.no_grad():
-                accuracies[iter] = accuracy(softmax(network_output, dim=1), batch_y).cpu()
+                accuracies[iter] = one_hot_accuracy(softmax(network_output, dim=1), batch_y).cpu()
             iter += 1
 
         print('recent accuracy', accuracies[new_iter_start:iter - 1].mean())
@@ -211,6 +197,7 @@ def online_expr(params: {}):
 
 
 def save_data(file, data):
+    print("file: ", file)
     with open(file, 'wb+') as f:
         pickle.dump(data, f)
 
