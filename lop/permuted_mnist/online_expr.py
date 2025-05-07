@@ -17,10 +17,9 @@ def one_hot_accuracy(predictions, targets):
     true_classes = targets.argmax(dim=1)
     return (predicted_classes == true_classes).float().mean()
 
-
 def online_expr(params: {}):
     agent_type = params['agent']
-    num_tasks = 5
+    num_tasks = 200
     if 'num_tasks' in params.keys():
         num_tasks = params['num_tasks']
     if 'num_examples' in params.keys() and "change_after" in params.keys():
@@ -197,7 +196,6 @@ def online_expr(params: {}):
 
 
 def save_data(file, data):
-    print("file: ", file)
     with open(file, 'wb+') as f:
         pickle.dump(data, f)
 

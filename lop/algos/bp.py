@@ -39,7 +39,6 @@ class Backprop(object):
         output, features = self.net.predict(x=x)
         loss = self.loss_func(output, target)
         self.previous_features = features
-
         loss.backward()
         self.opt.step()
         if self.to_perturb:
