@@ -14,6 +14,8 @@ import os
 class ExperimentTracker:
     # Static dictionary to store metrics across all label modes
     all_metrics = {}
+    # Static dictionary to store number of classes history for each mode
+    num_classes_history = {}
     
     def __init__(self, eval_samples=2000, batch_size=90, label_mode='raw'):
         self.eval_samples = eval_samples
@@ -37,11 +39,12 @@ class ExperimentTracker:
                 'effective_rank': {layer: [] for layer in self.tracked_layers}
             }
         }
-        self.num_classes_history = []
         self.activation_hooks = {}
         
         # Add this label mode's metrics to the static dictionary
         ExperimentTracker.all_metrics[label_mode] = self.metrics
+        # Initialize history for this mode
+        ExperimentTracker.num_classes_history[label_mode] = []
         
         # Setup evaluation data
         transform = transforms.Compose([
@@ -136,8 +139,12 @@ class ExperimentTracker:
             if rank_key in metrics_dict:
                 self.metrics[phase]['effective_rank'][layer_name].append(metrics_dict[rank_key])
         
-        if (not self.num_classes_history or self.num_classes_history[-1] != num_classes):
-            self.num_classes_history.append(num_classes)
+        # Always append num_classes to history for this mode
+        ExperimentTracker.num_classes_history[self.label_mode].append(num_classes)
+        
+        # Verify lengths match
+        assert len(ExperimentTracker.num_classes_history[self.label_mode]) == len(self.metrics[phase]['accuracy']), \
+            f"Length mismatch: num_classes_history ({len(ExperimentTracker.num_classes_history[self.label_mode])}) != accuracy ({len(self.metrics[phase]['accuracy'])})"
 
     def plot_results(self, save_dir: str = 'results'):
         """Generate comparative plots for all label modes"""
@@ -154,7 +161,7 @@ class ExperimentTracker:
         # Plot accuracy comparison
         plt.figure(figsize=(12, 8))
         for idx, (mode, metrics) in enumerate(ExperimentTracker.all_metrics.items()):
-            plt.plot(self.num_classes_history, 
+            plt.plot(ExperimentTracker.num_classes_history[mode], 
                     metrics['incremental']['accuracy'],
                     marker='o', 
                     color=colors[idx % len(colors)],
@@ -172,7 +179,7 @@ class ExperimentTracker:
         for layer_name in self.tracked_layers:
             plt.figure(figsize=(12, 8))
             for idx, (mode, metrics) in enumerate(ExperimentTracker.all_metrics.items()):
-                plt.plot(self.num_classes_history,
+                plt.plot(ExperimentTracker.num_classes_history[mode],
                         metrics['incremental']['dead_neurons'][layer_name],
                         marker='o',
                         color=colors[idx % len(colors)],
@@ -190,7 +197,7 @@ class ExperimentTracker:
         for layer_name in self.tracked_layers:
             plt.figure(figsize=(12, 8))
             for idx, (mode, metrics) in enumerate(ExperimentTracker.all_metrics.items()):
-                plt.plot(self.num_classes_history,
+                plt.plot(ExperimentTracker.num_classes_history[mode],
                         metrics['incremental']['effective_rank'][layer_name],
                         marker='o',
                         color=colors[idx % len(colors)],
@@ -210,7 +217,7 @@ class ExperimentTracker:
         
         # Plot individual mode metrics
         plt.figure(figsize=(10, 6))
-        plt.plot(self.num_classes_history, 
+        plt.plot(ExperimentTracker.num_classes_history[self.label_mode], 
                 self.metrics['incremental']['accuracy'],
                 marker='o')
         plt.xlabel('Number of Classes')
@@ -223,7 +230,7 @@ class ExperimentTracker:
         for layer_name in self.tracked_layers:
             # Dead neurons for this mode
             plt.figure(figsize=(10, 6))
-            plt.plot(self.num_classes_history,
+            plt.plot(ExperimentTracker.num_classes_history[self.label_mode],
                     self.metrics['incremental']['dead_neurons'][layer_name],
                     marker='o')
             plt.xlabel('Number of Classes')
@@ -235,7 +242,7 @@ class ExperimentTracker:
 
             # Effective rank for this mode
             plt.figure(figsize=(10, 6))
-            plt.plot(self.num_classes_history,
+            plt.plot(ExperimentTracker.num_classes_history[self.label_mode],
                     self.metrics['incremental']['effective_rank'][layer_name],
                     marker='o')
             plt.xlabel('Number of Classes')
@@ -243,4 +250,36 @@ class ExperimentTracker:
             plt.title(f'Effective Rank vs Number of Classes\n{layer_name} ({self.label_mode.upper()})')
             plt.grid(True)
             plt.savefig(f'{mode_dir}/effective_rank_{layer_name}.png')
-            plt.close() 
+            plt.close()
+
+    def save_all_metrics(self, save_dir: str = 'results'):
+        """Save all metrics to a file"""
+        import json
+        from datetime import datetime
+        
+        os.makedirs(save_dir, exist_ok=True)
+        
+        # Create a serializable version of the metrics
+        serializable_metrics = {}
+        
+        for mode, metrics in ExperimentTracker.all_metrics.items():
+            serializable_metrics[mode] = {
+                'accuracy': metrics['incremental']['accuracy'],
+                'num_classes_history': ExperimentTracker.num_classes_history[mode],
+                'dead_neurons': {},
+                'effective_rank': {}
+            }
+            
+            # Add layer-specific metrics
+            for layer_name in self.tracked_layers:
+                serializable_metrics[mode]['dead_neurons'][layer_name] = metrics['incremental']['dead_neurons'][layer_name]
+                serializable_metrics[mode]['effective_rank'][layer_name] = metrics['incremental']['effective_rank'][layer_name]
+        
+        # Save to file
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        metrics_file = f"{save_dir}/all_metrics_{timestamp}.json"
+        
+        with open(metrics_file, 'w') as f:
+            json.dump(serializable_metrics, f, indent=4)
+            
+        print(f"All metrics saved to {metrics_file}") 

@@ -135,7 +135,7 @@ class Trainer:
         for param_group in optimizer.param_groups:
             param_group['lr'] = lr
     
-    def train_model(self, model, phase_num, num_epochs=10):
+    def train_model(self, model, phase_num, num_epochs=3):
         """Train model for one phase"""
         # Verify model is on correct device
         model = model.to(self.device)
@@ -272,7 +272,7 @@ class Trainer:
         
         return 100. * correct / total
     
-    def run_experiment(self, num_phases=20, classes_per_phase=5):
+    def run_experiment(self, num_phases=20, classes_per_phase=5, plot_at_end=True):
         """Run incremental learning experiment"""
         # Initialize model with correct output dimension based on label mode
         output_dim = 100 if self.label_mode in ['one_hot', 'multi_hot', 'random_labels'] else classes_per_phase
@@ -305,8 +305,12 @@ class Trainer:
                     additional_classes=classes_per_phase
                 )
             
-            # Plot results
+        # Plot results at the end of all phases instead of after each phase
+        if plot_at_end:
+            print("\nGenerating plots...")
             self.tracker.plot_results()
+            
+        return incremental_model
 
 def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
