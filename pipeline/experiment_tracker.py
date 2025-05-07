@@ -143,7 +143,12 @@ class ExperimentTracker:
         """Generate comparative plots for all label modes"""
         os.makedirs(save_dir, exist_ok=True)
         
-        plt.style.use('seaborn-v0_8-darkgrid')
+        try:
+            import seaborn as sns
+            sns.set_theme(style="darkgrid")  # or any other you like
+        except ImportError:
+            plt.style.use('ggplot')  # fallback that always works
+    
         colors = ['b', 'g', 'r', 'c', 'm']  # Colors for different label modes
         
         # Plot accuracy comparison
