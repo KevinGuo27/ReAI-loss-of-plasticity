@@ -4,7 +4,7 @@ import torchvision.models as models
 import torch.nn.init as init
 
 class IncrementalResNet18(nn.Module):
-    def __init__(self, initial_classes=5):
+    def __init__(self, initial_classes=5, output_dim=None):
         super(IncrementalResNet18, self).__init__()
         # Load pretrained ResNet-18 without final layer
         self.resnet = models.resnet18(pretrained=False)
@@ -12,7 +12,8 @@ class IncrementalResNet18(nn.Module):
         self.resnet.fc = nn.Identity()  # Remove final layer
         
         # Create expandable classification head
-        self.classifier = nn.Linear(in_features, initial_classes)
+        self.output_dim = output_dim if output_dim is not None else initial_classes
+        self.classifier = nn.Linear(in_features, self.output_dim)
         
         # Initialize weights
         self._initialize_weights()
@@ -34,6 +35,9 @@ class IncrementalResNet18(nn.Module):
     
     def expand_output(self, additional_classes=5):
         """Expand the output layer by adding new classes"""
+        if self.output_dim == 100 or self.output_dim == 200:  # For one_hot, multi_hot, random_labels, or one_hot_self_concat modes
+            return  # Don't expand in these modes
+            
         current_classes = self.classifier.out_features
         new_classifier = nn.Linear(self.classifier.in_features, 
                                  current_classes + additional_classes)

@@ -39,8 +39,10 @@ class Trainer:
         # Setup loss function based on label mode
         if label_mode == 'raw':
             self.criterion = nn.CrossEntropyLoss()
+        elif label_mode in ['one_hot', 'multi_hot']:
+            self.criterion = nn.BCEWithLogitsLoss()  # Better for binary vectors
         else:
-            self.criterion = nn.MSELoss()  # Use MSE for transformed labels
+            self.criterion = nn.MSELoss()  # Use MSE for other transformed labels
         
         # Setup data
         train_transform = get_transforms(train=True)
@@ -99,20 +101,22 @@ class Trainer:
         trainset = Subset(self.full_trainset, train_indices)
         testset = Subset(self.full_testset, test_indices)
         
-        # Create dataloaders
+        # Create dataloaders with optimized settings for GPU
         self.trainloader = DataLoader(
             trainset, 
             batch_size=self.batch_size, 
             shuffle=True, 
-            num_workers=0,  # Run in main process
-            pin_memory=True
+            num_workers=2,  # Increased for better performance
+            pin_memory=True,  # Faster data transfer to GPU
+            persistent_workers=True  # Keep workers alive between epochs
         )
         self.testloader = DataLoader(
             testset, 
             batch_size=self.batch_size, 
             shuffle=False, 
-            num_workers=0,  # Run in main process
-            pin_memory=True
+            num_workers=2,  # Increased for better performance
+            pin_memory=True,  # Faster data transfer to GPU
+            persistent_workers=True  # Keep workers alive between epochs
         )
         
         return len(current_task_classes)
@@ -133,6 +137,10 @@ class Trainer:
     
     def train_model(self, model, phase_num, num_epochs=10):
         """Train model for one phase"""
+        # Verify model is on correct device
+        model = model.to(self.device)
+        print(f"Model device: {next(model.parameters()).device}")
+        
         optimizer = optim.SGD(
             model.parameters(),
             lr=0.1,
@@ -154,12 +162,19 @@ class Trainer:
             total = 0
             
             for inputs, targets, original_targets in self.trainloader:
+                # Move data to device and verify
                 inputs = inputs.to(self.device)
                 if self.label_mode == 'raw':
                     targets = targets.to(self.device)
                 else:
                     targets = targets.to(self.device).float()
                 original_targets = original_targets.to(self.device)
+                
+                # Verify data is on correct device
+                if epoch == 0 and total == 0:  # Print only once at start
+                    print(f"Input device: {inputs.device}")
+                    print(f"Target device: {targets.device}")
+                    print(f"Original target device: {original_targets.device}")
                 
                 optimizer.zero_grad()
                 outputs = model(inputs)
@@ -259,9 +274,13 @@ class Trainer:
     
     def run_experiment(self, num_phases=20, classes_per_phase=5):
         """Run incremental learning experiment"""
-        # Initialize model with initial classes
+        # Initialize model with correct output dimension based on label mode
+        output_dim = 100 if self.label_mode in ['one_hot', 'multi_hot', 'random_labels'] else classes_per_phase
+        if self.label_mode == 'one_hot_self_concat':
+            output_dim = 200
+            
         incremental_model = IncrementalResNet18(
-            initial_classes=classes_per_phase
+            initial_classes=output_dim
         ).to(self.device)
         
         for phase in range(num_phases):

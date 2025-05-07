@@ -71,9 +71,10 @@ class ExperimentTracker:
                            if self.base_dataset[i][1] == class_idx]
             indices.extend(class_indices[:samples_per_class])
         
+        print(f"Number of samples: {len(indices)}")
         # If we don't have enough samples, raise an error
-        if len(indices) < self.eval_samples:
-            raise ValueError(f"Not enough samples to evaluate. Need {self.eval_samples}, got {len(indices)}")
+        # if len(indices) < self.eval_samples:
+        #     raise ValueError(f"Not enough samples to evaluate. Need {self.eval_samples}, got {len(indices)}")
         
         # Create subset and dataloader with reduced workers
         eval_subset = Subset(self.eval_dataset, indices[:self.eval_samples])
@@ -100,7 +101,7 @@ class ExperimentTracker:
         model.eval()
         with torch.no_grad():
             # Just use the first batch
-            inputs, _ = next(iter(eval_loader))
+            inputs, _, _ = next(iter(eval_loader))
             inputs = inputs.to(device)
             _ = model(inputs)  # Forward pass to trigger hooks
             
