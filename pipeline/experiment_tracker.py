@@ -143,7 +143,7 @@ class ExperimentTracker:
         """Generate comparative plots for all label modes"""
         os.makedirs(save_dir, exist_ok=True)
         
-        plt.style.use('seaborn-v0_8')
+        plt.style.use('seaborn-v0_8-darkgrid')
         colors = ['b', 'g', 'r', 'c', 'm']  # Colors for different label modes
         
         # Plot accuracy comparison
