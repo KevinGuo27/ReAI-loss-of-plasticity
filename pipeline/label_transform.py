@@ -45,18 +45,32 @@ def one_hot_self_concat(labels, num_classes=10):
     onehot = torch.nn.functional.one_hot(labels, num_classes).float()
     return torch.cat([onehot, onehot], dim=-1)  # Concatenate with itself
 
+# Cache for random embeddings to ensure consistency
+_RANDOM_EMBEDDINGS_CACHE = {}
+
 def random_labels(labels, num_classes=10, output_dim=None):
     """Generates random label embeddings of specified dimension.
     If output_dim is None, defaults to num_classes.
     
     This can be used to study how different label space dimensionalities
     affect learning, even when the number of actual classes remains constant.
+    
+    Uses a cache to ensure the same label always maps to the same embedding.
     """
+    # global _RANDOM_EMBEDDINGS_CACHE # Not strictly needed if only reading/modifying dict contents
+    
     if output_dim is None:
         output_dim = num_classes
         
-    # Generate random vectors, one for each class
-    class_embeddings = torch.randn(num_classes, output_dim)
+    # Create a unique key for this configuration
+    cache_key = f"{num_classes}_{output_dim}"
+    
+    # Generate random vectors once and reuse them
+    if cache_key not in _RANDOM_EMBEDDINGS_CACHE:
+        # Set fixed seed for reproducibility
+        torch.manual_seed(42)
+        _RANDOM_EMBEDDINGS_CACHE[cache_key] = torch.randn(num_classes, output_dim)
+        print(f"Created random embeddings cache for {num_classes} classes with dimension {output_dim}. Cache ID: {id(_RANDOM_EMBEDDINGS_CACHE)}")
     
     # Use these as a lookup table for the labels
-    return class_embeddings[labels]
+    return _RANDOM_EMBEDDINGS_CACHE[cache_key][labels]

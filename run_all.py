@@ -20,6 +20,12 @@ def run_all(num_phases=20, classes_per_phase=5):
     # Create results directory
     os.makedirs('results', exist_ok=True)
     
+    # Create directories for each label mode
+    # label_modes = ["random_labels"]
+    label_modes = ["raw", "one_hot", "multi_hot", "one_hot_self_concat", "random_labels"]
+    for mode in label_modes:
+        os.makedirs(f'results/{mode}', exist_ok=True)
+    
     # Start timing
     total_start_time = time.time()
     
@@ -31,8 +37,6 @@ def run_all(num_phases=20, classes_per_phase=5):
     device = torch.device("cuda" if has_gpu else "cpu")
     
     # Define all label modes to test
-    label_modes = ["one_hot", "raw", "multi_hot", "one_hot_self_concat", "random_labels"]
-    
     # Dictionary to store timing and metrics
     results = {
         "run_info": {
@@ -107,7 +111,7 @@ def run_all(num_phases=20, classes_per_phase=5):
         trainer.tracker.save_all_metrics()
 
 if __name__ == "__main__":
-    run_all(num_phases=4, classes_per_phase=25)
+    run_all(num_phases=10, classes_per_phase=10)
 
 
 

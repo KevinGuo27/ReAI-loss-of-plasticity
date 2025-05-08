@@ -17,7 +17,7 @@ class ExperimentTracker:
     # Static dictionary to store number of classes history for each mode
     num_classes_history = {}
     
-    def __init__(self, eval_samples=2000, batch_size=90, label_mode='raw'):
+    def __init__(self, eval_samples=2000, batch_size=128, label_mode='raw'):
         self.eval_samples = eval_samples
         self.batch_size = batch_size
         self.label_mode = label_mode
@@ -65,28 +65,28 @@ class ExperimentTracker:
 
     def get_evaluation_loader(self, num_classes):
         """Create a DataLoader with exactly eval_samples examples balanced across classes"""
-        samples_per_class = self.eval_samples // num_classes
+        # Use fewer samples per class for efficiency
+        samples_per_class = min(self.eval_samples // num_classes, 50)  # Cap at 50 samples per class
         indices = []
         
         # Get indices for each class
         for class_idx in range(num_classes):
             class_indices = [i for i in range(len(self.base_dataset)) 
                            if self.base_dataset[i][1] == class_idx]
+            # Take only the samples we need
             indices.extend(class_indices[:samples_per_class])
         
-        print(f"Number of samples: {len(indices)}")
-        # If we don't have enough samples, raise an error
-        # if len(indices) < self.eval_samples:
-        #     raise ValueError(f"Not enough samples to evaluate. Need {self.eval_samples}, got {len(indices)}")
+        print(f"Evaluating with {len(indices)} samples")
         
-        # Create subset and dataloader with reduced workers
-        eval_subset = Subset(self.eval_dataset, indices[:self.eval_samples])
+        # Create subset and dataloader with optimized settings
+        eval_subset = Subset(self.eval_dataset, indices[:min(len(indices), self.eval_samples)])
         return DataLoader(
             eval_subset, 
             batch_size=self.batch_size, 
             shuffle=False, 
-            num_workers=0,  # Run in main process to avoid memory issues
-            pin_memory=True  # More efficient GPU transfer
+            num_workers=4,  # Use more workers for better parallelism
+            pin_memory=True,  # More efficient GPU transfer
+            persistent_workers=True  # Keep workers alive between calls
         )
 
     def compute_metrics(self, model, num_classes) -> Dict:

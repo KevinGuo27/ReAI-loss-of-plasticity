@@ -9,6 +9,7 @@ from pipeline.experiment_tracker import ExperimentTracker
 from pipeline.dataset import LabelTransformedDataset
 import os
 import numpy as np
+from pipeline.label_transform import _RANDOM_EMBEDDINGS_CACHE
 
 def get_transforms(train=True):
     normalize = transforms.Normalize(
@@ -39,10 +40,17 @@ class Trainer:
         # Setup loss function based on label mode
         if label_mode == 'raw':
             self.criterion = nn.CrossEntropyLoss()
-        elif label_mode in ['one_hot', 'multi_hot']:
+        elif label_mode in ['one_hot', 'multi_hot', 'one_hot_self_concat']:
+            # Use BCEWithLogitsLoss for all binary vector encodings
             self.criterion = nn.BCEWithLogitsLoss()  # Better for binary vectors
+        elif label_mode == 'random_labels':
+            # For random embeddings, use MSELoss which works well for continuous targets
+            self.criterion = nn.MSELoss()
+            # Initialize random embeddings cache to ensure it exists
+            self._init_random_embeddings_cache()
         else:
-            self.criterion = nn.MSELoss()  # Use MSE for other transformed labels
+            # Fallback for unknown label modes
+            self.criterion = nn.MSELoss()
         
         # Setup data
         train_transform = get_transforms(train=True)
@@ -106,7 +114,7 @@ class Trainer:
             trainset, 
             batch_size=self.batch_size, 
             shuffle=True, 
-            num_workers=2,  # Increased for better performance
+            num_workers=4,  # Increased for better performance
             pin_memory=True,  # Faster data transfer to GPU
             persistent_workers=True  # Keep workers alive between epochs
         )
@@ -114,7 +122,7 @@ class Trainer:
             testset, 
             batch_size=self.batch_size, 
             shuffle=False, 
-            num_workers=2,  # Increased for better performance
+            num_workers=4,  # Increased for better performance
             pin_memory=True,  # Faster data transfer to GPU
             persistent_workers=True  # Keep workers alive between epochs
         )
@@ -134,8 +142,26 @@ class Trainer:
         
         for param_group in optimizer.param_groups:
             param_group['lr'] = lr
+            
+    def _init_random_embeddings_cache(self):
+        """Initialize the random embeddings cache for all classes"""
+        from pipeline.label_transform import random_labels, _RANDOM_EMBEDDINGS_CACHE
+        
+        # Get the number of classes from the dataset
+        num_classes = self.get_output_size()
+        
+        # Create cache key
+        cache_key = f"{num_classes}_{num_classes}"
+        
+        # Check if cache already exists for this key
+        if cache_key not in _RANDOM_EMBEDDINGS_CACHE:
+            # Call random_labels with a dummy label to initialize the cache
+            random_labels(torch.tensor([0]), num_classes=num_classes, output_dim=num_classes)
+        
+        print(f"Random embeddings cache initialized with key: {cache_key}")
+        print(f"Cache keys: {list(_RANDOM_EMBEDDINGS_CACHE.keys())}")
     
-    def train_model(self, model, phase_num, num_epochs=3):
+    def train_model(self, model, phase_num, num_epochs=5):
         """Train model for one phase"""
         # Verify model is on correct device
         model = model.to(self.device)
@@ -149,7 +175,9 @@ class Trainer:
         )
         
         best_acc = 0
-        best_weights = None
+        best_weights = model.state_dict().copy()  # Initialize with current weights
+        patience = 2  # Early stopping patience
+        no_improve_epochs = 0
         
         # Setup activation hooks for metrics
         self.tracker.setup_hooks(model)
@@ -183,6 +211,23 @@ class Trainer:
                     loss = self.criterion(outputs, targets)
                     _, predicted = outputs.max(1)
                     correct += predicted.eq(original_targets).sum().item()
+                elif self.label_mode == 'random_labels':
+                    loss = self.criterion(outputs, targets)
+                    # For random labels, find closest embedding vector by computing distances
+                    num_classes = self.get_output_size()
+                    cache_key = f"{num_classes}_{num_classes}"
+                    
+                    all_class_embeddings = torch.stack([
+                        _RANDOM_EMBEDDINGS_CACHE[cache_key][i]
+                        for i in range(num_classes)
+                    ]).to(self.device)
+                    
+                    # Compute distances between output and all class embeddings
+                    outputs_expanded = outputs.unsqueeze(1)
+                    embeddings_expanded = all_class_embeddings.unsqueeze(0)
+                    distances = torch.sum((outputs_expanded - embeddings_expanded) ** 2, dim=2)
+                    _, predicted = distances.min(1)
+                    correct += predicted.eq(original_targets).sum().item()
                 else:
                     loss = self.criterion(outputs, targets)
                     # For transformed labels, convert back to class predictions
@@ -200,10 +245,13 @@ class Trainer:
             # Evaluate
             test_acc = self.evaluate(model)
             
-            # Save best model
+            # Early stopping logic
             if test_acc > best_acc:
                 best_acc = test_acc
                 best_weights = model.state_dict().copy()
+                no_improve_epochs = 0  # Reset counter
+                
+                # Save checkpoint
                 checkpoint = {
                     'model_state_dict': model.state_dict(),
                     'optimizer_state_dict': optimizer.state_dict(),
@@ -212,12 +260,22 @@ class Trainer:
                     'accuracy': test_acc,
                     'label_mode': self.label_mode
                 }
+                
+                # Ensure directory exists
+                os.makedirs(f'results/{self.label_mode}', exist_ok=True)
                 torch.save(checkpoint, f'results/{self.label_mode}/phase_{phase_num}_best.pth')
-            
+            else:
+                no_improve_epochs += 1  # Increment counter
+                
             print(f'Phase {phase_num} | Epoch {epoch+1}/{num_epochs}')
             print(f'Train Loss: {running_loss/len(self.trainloader):.3f}')
             print(f'Train Acc: {100.*correct/total:.2f}%')
             print(f'Test Acc: {test_acc:.2f}%')
+            
+            # Early stopping check
+            if no_improve_epochs >= patience:
+                print(f"Early stopping triggered after epoch {epoch+1}")
+                break
         
         # Load best weights
         model.load_state_dict(best_weights)
@@ -235,6 +293,23 @@ class Trainer:
                     targets = targets.to(self.device)
                     outputs = model(inputs)
                     _, predicted = outputs.max(1)
+                elif self.label_mode == 'random_labels':
+                    targets = targets.to(self.device).float()
+                    outputs = model(inputs)
+                    # For random labels, find closest embedding vector by computing distances
+                    num_classes = self.get_output_size()
+                    cache_key = f"{num_classes}_{num_classes}"
+                    
+                    all_class_embeddings = torch.stack([
+                        _RANDOM_EMBEDDINGS_CACHE[cache_key][i]
+                        for i in range(num_classes)
+                    ]).to(self.device)
+                    
+                    # Compute distances between output and all class embeddings
+                    outputs_expanded = outputs.unsqueeze(1)
+                    embeddings_expanded = all_class_embeddings.unsqueeze(0)
+                    distances = torch.sum((outputs_expanded - embeddings_expanded) ** 2, dim=2)
+                    _, predicted = distances.min(1)
                 else:
                     targets = targets.to(self.device).float()
                     outputs = model(inputs)
@@ -266,7 +341,25 @@ class Trainer:
                 inputs = inputs.to(self.device)
                 original_targets = original_targets.to(self.device)
                 outputs = model(inputs)
-                _, predicted = outputs.max(1)
+                
+                if self.label_mode == 'random_labels':
+                    # For random labels, find closest embedding vector by computing distances
+                    num_classes = self.get_output_size()
+                    cache_key = f"{num_classes}_{num_classes}"
+                    
+                    all_class_embeddings = torch.stack([
+                        _RANDOM_EMBEDDINGS_CACHE[cache_key][i]
+                        for i in range(num_classes)
+                    ]).to(self.device)
+                    
+                    # Compute distances between output and all class embeddings
+                    outputs_expanded = outputs.unsqueeze(1)
+                    embeddings_expanded = all_class_embeddings.unsqueeze(0)
+                    distances = torch.sum((outputs_expanded - embeddings_expanded) ** 2, dim=2)
+                    _, predicted = distances.min(1)
+                else:
+                    _, predicted = outputs.max(1)
+                    
                 total += original_targets.size(0)
                 correct += predicted.eq(original_targets).sum().item()
         
