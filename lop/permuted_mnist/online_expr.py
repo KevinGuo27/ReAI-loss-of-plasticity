@@ -6,13 +6,13 @@ import argparse
 import numpy as np
 from tqdm import tqdm
 from lop.algos.bp import Backprop
-from lop.algos.er import EffectiveRank
 from lop.algos.cbp import ContinualBackprop
 from lop.nets.linear import MyLinear
 from torch.nn.functional import softmax
 from lop.nets.deep_ffnn import DeepFFNN
 from lop.utils.miscellaneous import nll_accuracy, compute_matrix_rank_summaries
 
+import os
 
 def online_expr(params: {}):
     agent_type = params['agent']
@@ -68,12 +68,6 @@ def online_expr(params: {}):
         maturity_threshold = params['mt']
     if 'util_type' in params.keys():
         util_type = params['util_type']
-    if 'ef_lambda' in params.keys():
-        ef_lambda = params['ef_lambda']
-    if 'rank_interval' in params.keys():
-        rank_interval = params['rank_interval']
-    if 'er_lr' in params.keys():
-        er_lr = params['er_lr']
 
     classes_per_task = 10
     images_per_class = 6000
@@ -93,7 +87,7 @@ def online_expr(params: {}):
             net=net,
             step_size=step_size,
             opt=opt,
-            loss='nll',
+            loss='mse',
             weight_decay=weight_decay,
             device=dev,
             to_perturb=to_perturb,
@@ -104,7 +98,7 @@ def online_expr(params: {}):
             net=net,
             step_size=step_size,
             opt=opt,
-            loss='nll',
+            loss='mse',
             replacement_rate=replacement_rate,
             maturity_threshold=maturity_threshold,
             decay_rate=decay_rate,
@@ -112,20 +106,7 @@ def online_expr(params: {}):
             accumulate=True,
             device=dev,
         )
-    elif agent_type in ['er']:
-        learner = EffectiveRank(
-            net=net,
-            step_size=step_size,
-            opt=opt,
-            loss='nll',
-            weight_decay=weight_decay,
-            device=dev,
-            to_perturb=to_perturb,
-            perturb_scale=perturb_scale,
-            ef_lambda=ef_lambda,
-            rank_interval=rank_interval,
-            er_lr=er_lr,
-        )
+
     accuracy = nll_accuracy
     examples_per_task = images_per_class * classes_per_task
     total_examples = int(num_tasks * change_after)
@@ -146,17 +127,36 @@ def online_expr(params: {}):
 
     iter = 0
     with open('data/mnist_', 'rb+') as f:
-        x, y, _, _ = pickle.load(f)
+        x, raw_y, _, _ = pickle.load(f)
         if use_gpu == 1:
             x = x.to(dev)
-            y = y.to(dev)
+            raw_y = raw_y.to(dev)
+
+        random_mapping_file = 'random_label_mapping.pkl'
+        if os.path.exists(random_mapping_file):
+            with open(random_mapping_file, 'rb') as f:
+                label_mapping = pickle.load(f)
+            print('Loaded assigned random label mapping.')
+        else:
+            torch.manual_seed(42)  # for reproducibility
+            num_classes = 10
+            label_mapping = torch.rand(num_classes, num_classes)  # Random floats [0, 1]
+
+            with open(random_mapping_file, 'wb') as f:
+                pickle.dump(label_mapping, f)
+            print('Generated and saved assigned random label mapping.')
 
     for task_idx in (range(num_tasks)):
         new_iter_start = iter
         pixel_permutation = np.random.permutation(input_size)
         x = x[:, pixel_permutation]
+
         data_permutation = np.random.permutation(examples_per_task)
-        x, y = x[data_permutation], y[data_permutation]
+        x = x[data_permutation]
+        y_task = raw_y[data_permutation]
+
+        # Map each original label to its assigned random vector
+        y_mapped = label_mapping[y_task.long()]  # (N, 10)
 
         if agent_type != 'linear':
             with torch.no_grad():
@@ -167,12 +167,14 @@ def online_expr(params: {}):
                     approximate_ranks[new_idx][rep_layer_idx], approximate_ranks_abs[new_idx][rep_layer_idx] = \
                         compute_matrix_rank_summaries(m=m[rep_layer_idx], use_scipy=True)
                     dead_neurons[new_idx][rep_layer_idx] = (m[rep_layer_idx].abs().sum(dim=0) == 0).sum()
-                print('step:', task_idx, ', approximate rank: ', approximate_ranks[new_idx], ', dead neurons: ', dead_neurons[new_idx], 'effective rank: ', effective_ranks[new_idx])
+                    # effective_rank_test[task_idx] = effective_ranks[]
+                print('approximate rank: ', approximate_ranks[new_idx], ', dead neurons: ', dead_neurons[new_idx])
+
 
         for start_idx in tqdm(range(0, change_after, mini_batch_size)):
             start_idx = start_idx % examples_per_task
             batch_x = x[start_idx: start_idx+mini_batch_size]
-            batch_y = y[start_idx: start_idx+mini_batch_size]
+            batch_y = y_mapped[start_idx: start_idx+mini_batch_size, :]
 
             # train the network
             loss, network_output = learner.learn(x=batch_x, target=batch_y)
@@ -182,8 +184,10 @@ def online_expr(params: {}):
                     weight_mag_sum[iter][idx] = learner.net.layers[layer_idx].weight.data.abs().sum()
             # log accuracy
             with torch.no_grad():
-                accuracies[iter] = accuracy(softmax(network_output, dim=1), batch_y).cpu()
-            iter += 1
+                # accuracies[iter] = accuracy(softmax(network_output, dim=1), batch_y).cpu()
+                with torch.no_grad():
+                    accuracies[iter] = accuracy(softmax(network_output, dim=1), batch_y.argmax(dim=1)).cpu()
+                    iter += 1
 
         print('recent accuracy', accuracies[new_iter_start:iter - 1].mean())
         if task_idx % save_after_every_n_tasks == 0:
@@ -209,11 +213,9 @@ def online_expr(params: {}):
     }
     save_data(file=params['data_file'], data=data)
 
-
 def save_data(file, data):
     with open(file, 'wb+') as f:
         pickle.dump(data, f)
-
 
 def main(arguments):
     parser = argparse.ArgumentParser(
@@ -228,7 +230,6 @@ def main(arguments):
         params = json.load(f)
 
     online_expr(params)
-
 
 if __name__ == '__main__':
     sys.exit(main(sys.argv[1:]))

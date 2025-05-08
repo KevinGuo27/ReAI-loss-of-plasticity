@@ -46,7 +46,7 @@ class Backprop(object):
             self.perturb()
         if self.loss == 'nll':
             return loss.detach(), output.detach()
-        return loss.detach()
+        return loss.detach(), output.detach()
 
     def perturb(self):
         with torch.no_grad():
