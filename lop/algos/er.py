@@ -40,7 +40,7 @@ class EffectiveRank(object):
         # separate optimizer for erank objective
         # you might even choose different hyperparams here:
         self.opt_erank = optim.SGD(net.parameters(),
-                                   lr=erank_step_size)
+                                   lr=erank_step_size, weight_decay=weight_decay)
 
         # loss function mapping
         self.loss = loss

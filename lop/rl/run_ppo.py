@@ -1,4 +1,5 @@
 import os
+os.environ['MUJOCO_GL'] = 'egl'
 import yaml
 import pickle
 import argparse

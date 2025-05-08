@@ -5,9 +5,9 @@
 #SBATCH --time=24:00:00
 #SBATCH --mem=64G
 #SBATCH --job-name=run
-#SBATCH --output=run_bp-%A_%a.out   # %A = master job ID, %a = array index
-#SBATCH --error=run_bp-%A_%a.err
-#SBATCH --array=0-26              # launches 9 tasks with IDs 0,1,...,8
+#SBATCH --output=run_l2_200-%A_%a.out   # %A = master job ID, %a = array index
+#SBATCH --error=run_l2_200-%A_%a.err
+#SBATCH --array=0-5         # launches 9 tasks with IDs 0,1,...,8
 
 # activate your environment
 source ~/envs/lop/bin/activate
