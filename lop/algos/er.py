@@ -96,10 +96,6 @@ class EffectiveRank(object):
         output, features = self.net.predict(x)
         loss_task = self.loss_func(output, target)
 
-        erank_losses = [self.effective_rank_loss(f) for f in features]
-        loss_erank = - torch.stack(erank_losses).mean()
-        loss_task += self.erank_lambda * loss_erank
-
         loss_task.backward()
         self.opt.step()
 
