@@ -1,5 +1,4 @@
 import os
-os.environ['MUJOCO_GL'] = 'egl'
 import yaml
 import pickle
 import argparse
@@ -20,13 +19,15 @@ from lop.utils.miscellaneous import compute_matrix_rank_summaries
 
 
 def save_data(cfg, rets, termination_steps,
-              pol_features_activity, stable_rank, mu, pol_weights, val_weights,
+              pol_features_activity, stable_rank, mu, pol_weights, val_weights, dead_neurons, effective_rank,
               action_probs=None, weight_change=[], friction=-1.0, num_updates=0, previous_change_time=0):
     data_dict = {
         'rets': np.array(rets),
         'termination_steps': np.array(termination_steps),
         'pol_features_activity': pol_features_activity,
         'stable_rank': stable_rank,
+        'dead_neurons': dead_neurons,
+        'effective_rank': effective_rank,
         'action_output': mu,
         'pol_weights': pol_weights,
         'val_weights': val_weights,
@@ -117,6 +118,10 @@ def main():
     cfg.setdefault('util_type_pol', 'contribution')
     cfg.setdefault('pgnt', (cfg['rr']>0) or cfg['redo'])
     cfg.setdefault('vgnt', (cfg['rr']>0) or cfg['redo'])
+    cfg.setdefault('use_er', False)
+    cfg.setdefault('er_lr', 0.001)
+    cfg.setdefault('er_step', 1)
+    cfg.setdefault('er_batch', 256)
 
     # Initialize env
     seed = cfg['seed']
@@ -165,7 +170,8 @@ def main():
                   loss_type=cfg['loss_type'], perturb_scale=cfg['perturb_scale'],
                   util_type_val=cfg['util_type_val'], replacement_rate=cfg['rr'], decay_rate=cfg['decay_rate'],
                   vgnt=cfg['vgnt'], pgnt=cfg['pgnt'], util_type_pol=cfg['util_type_pol'], mt=cfg['mt'],
-                  redo=cfg['redo'], threshold=cfg['threshold'], reset_period=cfg['reset_period']
+                  redo=cfg['redo'], threshold=cfg['threshold'], reset_period=cfg['reset_period'], er_lr=cfg['er_lr'],
+                  er_step=cfg['er_step'], er_batch=cfg['er_batch'], use_er=cfg['use_er'],
                   )
 
     to_log = cfg['to_log']
@@ -206,6 +212,10 @@ def main():
         if 'val_weights' in to_log:
             val_weights = np.array(val_weights)
         weight_change = data_dict['weight_change']
+        if 'dead_neurons' in to_log:
+            dead_neurons = data_dict['dead_neurons']
+        if 'effective_rank' in to_log:
+            effective_rank = data_dict['effective_rank']
     else:
         num_updates = 0
         previous_change_time = 0
@@ -222,6 +232,10 @@ def main():
             pol_features_activity = torch.zeros(size=(n_steps//1000 + 2, num_layers, cfg['h_dim'][0]))
         if 'stable_rank' in to_log:
             stable_rank = torch.zeros(size=(n_steps//10000 + 2,))
+        if 'dead_neurons' in to_log:
+            dead_neurons = torch.zeros(size=(n_steps//10000 + 2,))
+        if 'effective_rank' in to_log:
+            effective_rank = torch.zeros(size=(n_steps//10000 + 2,))
 
     ret = 0
     epi_steps = 0
@@ -240,7 +254,9 @@ def main():
             if 'mu' in to_log: mu[step] = a
             if step % 1000 == 0:
                 if step % 10000 == 0 and 'stable_rank' in to_log:
-                    _, _, _, stable_rank[step//10000] = compute_matrix_rank_summaries(m=short_term_feature_activity[:, -1, :], use_scipy=True)
+                    _, effective_rank[step//10000], _, stable_rank[step//10000] = compute_matrix_rank_summaries(m=short_term_feature_activity[:, -1, :], use_scipy=True)
+                    dead_neurons[step//10000] = (short_term_feature_activity[:, -1, :].abs().sum(dim=0) == 0).sum()
+                    print(f"Step {step}: stable rank: {stable_rank[step//10000]}, effective rank: {effective_rank[step//10000]}, dead neurons: {dead_neurons[step//10000]}")
                 if 'pol_features_activity' in to_log:
                     pol_features_activity[step//1000] = (short_term_feature_activity>0).float().mean(dim=0)
                     short_term_feature_activity *= 0
@@ -257,7 +273,7 @@ def main():
         o = op
         ret += r
         if done:
-            # print(step, "(", epi_steps, ") {0:.2f}".format(ret))
+            print(step, "(", epi_steps, ") {0:.2f}".format(ret))
             rets.append(ret)
             termination_steps.append(step)
             ret = 0
@@ -279,7 +295,7 @@ def main():
             save_checkpoint(cfg, step, agent.learner)
             # Save data logs
             save_data(cfg=cfg, rets=rets, termination_steps=termination_steps,
-                      pol_features_activity=pol_features_activity, stable_rank=stable_rank, mu=mu, pol_weights=pol_weights,
+                      pol_features_activity=pol_features_activity, stable_rank=stable_rank, dead_neurons=dead_neurons, effective_rank=effective_rank, mu=mu, pol_weights=pol_weights,
                       val_weights=val_weights, weight_change=weight_change, friction=friction,
                       num_updates=num_updates, previous_change_time=previous_change_time)
 

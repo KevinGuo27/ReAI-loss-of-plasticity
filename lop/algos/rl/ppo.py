@@ -5,7 +5,7 @@ from lop.algos.gnt import GnT
 from lop.algos.gntRedo import GnTredo
 from lop.algos.rl.learner import Learner
 import torch.nn.functional as F
-
+import torch.optim.lr_scheduler as lr_sched
 
 class PPO(Learner):
     """
@@ -37,6 +37,12 @@ class PPO(Learner):
                  redo=False,
                  threshold=0.03,
                  reset_period=1000,
+                 er_lr=0.001,
+                 er_lr_final=1e-7, 
+                 er_anneal_steps=15000,
+                 er_step=1,
+                 er_batch=256,
+                 use_er = False,
                  ):
         self.pol = pol
         self.buf = buf
@@ -44,6 +50,14 @@ class PPO(Learner):
         self.vf = vf
         self.lm = lm
         self.opt = Opt(list(self.pol.parameters()) + list(self.vf.parameters()), lr=lr, weight_decay=wd, betas=betas, eps=eps)
+        self.opt_pol_erank = Opt(list(self.pol.parameters()), lr=er_lr, weight_decay=wd, betas=betas, eps=eps)
+        self.opt_val_erank = Opt(list(self.vf.parameters()), lr=er_lr, weight_decay=wd, betas=betas, eps=eps)
+        lr_lambda = lambda t: max(
+            er_lr_final / er_lr,
+            1.0 - t / float(er_anneal_steps)
+        )
+        self.er_pol_sched = lr_sched.LambdaLR(self.opt_pol_erank, lr_lambda)
+        self.er_val_sched = lr_sched.LambdaLR(self.opt_val_erank, lr_lambda)
         self.device =device
         self.u_epi_up = u_epi_up
         self.n_itrs = n_itrs
@@ -57,6 +71,12 @@ class PPO(Learner):
         self.no_clipping = no_clipping
         self.loss_type = loss_type
         self.to_perturb = self.perturb_scale != 0
+        self.pol_os_buffer = []
+        self.pol_acts_buffer = []
+        self.vf_os_buffer = []
+        self.er_batch = er_batch
+        self.er_step = er_step
+        self.use_er = use_er
 
         """
         Initialize a generate-and-test object for your network
@@ -104,6 +124,41 @@ class PPO(Learner):
             if advs.std() != 0 and not torch.isnan(advs.std()): advs /= advs.std()
         v_rets, advs = v_rets.detach().to(self.device), advs.detach().to(self.device)
         return v_rets.view(-1, 1), advs
+    
+    def effective_rank_loss(self, feature: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
+        """
+        Compute the Shannon-entropy effective rank of the spectrum sv.
+        
+        Args:
+        sv: 1D tensor of singular values (non-negative).
+        eps: small constant to ensure numerical stability.
+        Returns:
+        scalar tensor: exp( - sum_i p_i * log(p_i) ).
+        """
+        sv = torch.linalg.svdvals(feature.T).abs()
+        total = sv.sum().clamp(min=eps)
+        p = sv / total
+        entropy = -(p * torch.log(p + eps)).sum()
+        return torch.exp(entropy)
+
+    def maximize_effective_rank(self, features, is_policy=True, steps=1):
+        if is_policy:
+            opt = self.opt_pol_erank
+        else:   
+            opt = self.opt_val_erank
+        for i in range(steps):
+            opt.zero_grad()
+            erank_losses = [self.effective_rank_loss(f.to(self.device)) for f in features]
+            loss_erank = - torch.stack(erank_losses).mean()
+            loss_erank.backward()
+            opt.step()
+            if is_policy:
+                self.er_pol_sched.step()
+            else:
+                self.er_val_sched.step()
+
+        # return the final erank value (detached)
+        return loss_erank.detach()
 
     def learn(self):
         os, acts, rs, op, logpbs, _, dones = self.buf.get(self.pol.dist_stack)
@@ -118,6 +173,18 @@ class PPO(Learner):
         for layer in self.pol.mean_net:
             if type(layer) is torch.nn.modules.linear.Linear:
                 old_weights.append(torch.clone(layer.weight.data))
+
+        if self.use_er:
+            # print('Maximizing effective rank')
+            # Effective rank maximization
+            for start in range(0, len(os), self.er_batch):
+                ind = inds[start:start + self.er_batch]
+                _, _ = self.pol.logp_dist(os[ind], acts[ind], to_log_features=True)
+                pol_feats = self.pol.get_activations()
+                self.maximize_effective_rank(pol_feats, is_policy=True, steps=self.er_step)
+                _ = self.vf.value(os[ind], to_log_features=True)
+                val_feats = self.vf.get_activations()
+                self.maximize_effective_rank(val_feats, is_policy=False, steps=self.er_step)
 
         for _ in range(self.n_itrs):
             np.random.shuffle(inds)

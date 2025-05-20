@@ -187,7 +187,7 @@ def online_expr(params):
             # train the network
             loss, network_output = learner.learn(x=batch_x, target=batch_y)
 
-            if agent_type in ['er'] and (len(buffer_x) % er_batch == 0) and not params.get("erank_interleave", False):
+            if agent_type in ['er'] and (len(buffer_x) % er_batch == 0):
                 rank_update_data = torch.cat(buffer_x, dim=0)
                 learner.maximize_effective_rank(rank_update_data, steps=er_step)
                 buffer_x = []

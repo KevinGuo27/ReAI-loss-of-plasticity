@@ -1,0 +1,23 @@
+{
+    "model_version": "ER on net with 3 hidden layer and 2000 hidden-units",
+    "_comment_1_": "List of problem/experiment parameters",
+    "num_runs": 3,
+    "num_tasks": 800,
+    "use_gpu": 1,
+    "data_dir": "data/task800/er/std_net/0/",
+    "to_log": true,
+    "_comment_2_": "Learner parameters",
+    "agent": "er",
+    "opt": "sgd",
+    "num_features": 100,
+    "num_hidden_layers": 3,
+    "mini_batch_size": 1,
+    "step_size": 0.01,
+    "er_lr": 0.01,
+    "er_step": 1,
+    "er_batch": 100,
+    "er_coeff": 0.01,
+    "weight_decay": 0,
+    "index": 0,
+    "data_file": "data/task800/er/std_net/0/2"
+}

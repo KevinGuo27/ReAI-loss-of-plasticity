@@ -11,7 +11,7 @@
   "_comment_2_": "Learner parameters",
   "agent": "er",
   "opt": "sgd",
-  "num_features": 100,
+  "num_features": 2000,
   "num_hidden_layers": 3,
   "mini_batch_size": 1,
   "step_size": 0.01,

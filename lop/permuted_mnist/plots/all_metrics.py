@@ -17,14 +17,14 @@ def add_cfg_performance(cfg='', setting_idx=0, m=2*10*1000, num_runs=30, metric=
             data = pickle.load(f)
 
         if metric == 'weight':
-            num_weights = 9588000
+            num_weights = 479400
             per_param_setting_performance.append(np.array(bin_m_errs(errs=data['weight_mag_sum'].sum(dim=1)/num_weights, m=m)))
         elif metric == 'dead_neurons':
             num_units = 3*2000
-            per_param_setting_performance.append(np.array(bin_m_errs(errs=data['dead_neurons'].sum(dim=1)/num_units*100, m=m)))
+            per_param_setting_performance.append(np.array(bin_m_errs(errs=data['dead_neurons'], m=m)))
         elif metric == 'effective_rank':
             rank_normlization = 3*2000/100
-            per_param_setting_performance.append(np.array(bin_m_errs(errs=data['effective_ranks'].sum(dim=1)/rank_normlization, m=m)))
+            per_param_setting_performance.append(np.array(bin_m_errs(errs=data['effective_ranks'], m=m)))
         else:
             per_param_setting_performance.append(np.array(bin_m_errs(errs=data['accuracies'] * 100, m=m)))
     print(param_settings[setting_idx], setting_idx, np.array(per_param_setting_performance).mean())
@@ -50,29 +50,31 @@ def main(arguments):
     m = {'weight': 60*1000, 'accuracy': 60*1000, 'dead_neurons': 1, 'effective_rank': 1}[metric]
     num_runs = params['num_runs']
 
-    bp_cfg, bp_setting_idx = '../cfg/bp/std_net.json', 1
-    adam_cfg, adam_setting_idx = '../cfg/adam.json', 0
-    l2_cfg, l2_setting_idx = '../cfg/l2.json', 1
-    snp_cfg, snp_setting_idx = '../cfg/snp.json', 1
-    cbp_cfg, cbp_setting_idx = '../cfg/cbp.json', 2
+    bp_cfg, bp_setting_idx = '../cfg/task800/bp/std_net.json', 0
+    l2_cfg, l2_setting_idx = '../cfg/task800/l2/std_net.json', 0
+    erowd_cfg, erowd_setting_idx = '../cfg/task800/erowd/std_net.json', 0
+    snp_cfg, snp_setting_idx = '../cfg/task800/snp/std_net.json', 0
+    cbp_cfg, cbp_setting_idx = '../cfg/task800/cbp/std_net.json', 0
+    er_cfg, er_setting_idx = '../cfg/task800/er/std_net.json', 0
     performances.append(add_cfg_performance(cfg=bp_cfg, setting_idx=bp_setting_idx, m=m, num_runs=num_runs, metric=metric))
-    performances.append(add_cfg_performance(cfg=adam_cfg, setting_idx=adam_setting_idx, m=m, num_runs=num_runs, metric=metric))
     performances.append(add_cfg_performance(cfg=l2_cfg, setting_idx=l2_setting_idx, m=m, num_runs=num_runs, metric=metric))
+    performances.append(add_cfg_performance(cfg=erowd_cfg, setting_idx=erowd_setting_idx, m=m, num_runs=num_runs, metric=metric))
     performances.append(add_cfg_performance(cfg=snp_cfg, setting_idx=snp_setting_idx, m=m, num_runs=num_runs, metric=metric))
     performances.append(add_cfg_performance(cfg=cbp_cfg, setting_idx=cbp_setting_idx, m=m, num_runs=num_runs, metric=metric))
+    performances.append(add_cfg_performance(cfg=er_cfg, setting_idx=er_setting_idx, m=m, num_runs=num_runs, metric=metric))
 
 
-    yticks = {'weight': [0, 0.02, 0.04, 0.06, 0.08, 0.10], 'accuracy': [91, 92, 93, 94, 95, 96],
-              'dead_neurons': [0, 10, 20, 30, 40, 50], 'effective_rank': [0, 10, 20, 30, 40, 50]}[metric]
+    yticks = {'weight': [0, 0.02, 0.04, 0.06, 0.08, 0.10], 'accuracy': [91,92, 93, 94, 95, 96],
+              'dead_neurons': [0, 20, 40, 60, 80, 100], 'effective_rank': [0, 10, 20, 30, 40, 50, 60, 70, 80]}[metric]
     generate_online_performance_plot(
         performances=performances,
-        colors=['C3', 'C9', 'C4', 'C1', 'C0'],
+        colors=['C3', 'C9', 'C4', 'C1', 'C2', 'C0'],
         yticks=yticks,
         xticks=[0, 200*m, 400*m, 600*m, 800*m],
         xticks_labels=['0', '200', '400', '600', '800'],
         m=m,
         fontsize=18,
-        labels=['bp', 'adam', 'l2', 'snp', 'cbp'],
+        labels=['bp', 'l2', 'erowd', 'snp', 'cbp', 'er'],
     )
 
 

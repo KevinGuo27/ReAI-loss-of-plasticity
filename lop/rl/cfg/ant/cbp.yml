@@ -21,5 +21,5 @@ beta_1: 0.99
 beta_2: 0.99
 wd: 1e-4
 dir: 'data/ant/cbp/'
-to_log: ['pol_features_activity', 'pol_weights', 'val_weights', 'stable_rank']
+to_log: ['pol_features_activity', 'pol_weights', 'val_weights', 'stable_rank', 'dead_neurons', 'effective_rank']
 label: 'CBP'

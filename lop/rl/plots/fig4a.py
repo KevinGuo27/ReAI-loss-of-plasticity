@@ -70,14 +70,13 @@ def main():
     plot_all = args.all
 
     cfg_file = f'../cfg/{env}/std.yml'
-    cfg_file1 = f'../cfg/{env}/cbp.yml'
-    cfg_file2, cfg_file3 = '', ''
-    if plot_all:
-        cfg_file2 = f'../cfg/{env}/ns.yml'
-        cfg_file3 = f'../cfg/{env}/l2.yml'
+    cfg_file1 = f'../cfg/{env}/l2.yml'
+    cfg_file2 = f'../cfg/{env}/er_l2.yml'
+    # if plot_all:
+    #     cfg_file2 = f'../cfg/{env}/ns.yml'
 
-    cfg_files = [cfg_file, cfg_file1, cfg_file2, cfg_file3]
-    colors = ['C3', 'C0', 'C1', 'C4']
+    cfg_files = [cfg_file, cfg_file1, cfg_file2]
+    colors = ['C3', 'C0', 'C1']
     cfgs = []
     for file in cfg_files:
         if file == '':  continue
@@ -85,7 +84,7 @@ def main():
         if 'label' not in cfgs[-1].keys(): cfgs[-1]['label'] = ''
 
     # num_runs = 30
-    num_runs = 20
+    num_runs = 10
     runs = [i + 0 for i in range(0, num_runs)]
     m = 250 * 1000
     ts = 100 * 1000 * 1000
@@ -99,7 +98,7 @@ def main():
         ts = 50 * 1000 * 1000
     if env == 'ant':
         yticks = [0, 2000, 4000, 5500]
-        ts = 50 * 1000 * 1000
+        ts = 25 * 1000 * 1000
 
     for idx, cfg in enumerate(cfgs):
         plot_for_one_cfg(cfg=cfg, runs=runs, m=m, ts=ts, color=colors[idx])
